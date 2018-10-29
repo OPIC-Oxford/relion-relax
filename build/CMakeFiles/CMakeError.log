@@ -1,0 +1,34 @@
+Determining if the __sincos exist failed with the following output:
+Change Dir: /raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp
+
+Run Build Command:/usr/bin/gmake "cmTryCompileExec2330744710/fast"
+/usr/bin/gmake -f CMakeFiles/cmTryCompileExec2330744710.dir/build.make CMakeFiles/cmTryCompileExec2330744710.dir/build
+gmake[1]: Entering directory `/raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp'
+/usr/bin/cmake -E cmake_progress_report /raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp/CMakeFiles 1
+Building CXX object CMakeFiles/cmTryCompileExec2330744710.dir/CheckSymbolExists.cxx.o
+/usr/bin/c++     -o CMakeFiles/cmTryCompileExec2330744710.dir/CheckSymbolExists.cxx.o -c /raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp/CheckSymbolExists.cxx
+Linking CXX executable cmTryCompileExec2330744710
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTryCompileExec2330744710.dir/link.txt --verbose=1
+/usr/bin/c++        CMakeFiles/cmTryCompileExec2330744710.dir/CheckSymbolExists.cxx.o  -o cmTryCompileExec2330744710 -rdynamic 
+CMakeFiles/cmTryCompileExec2330744710.dir/CheckSymbolExists.cxx.o: In function `main':
+CheckSymbolExists.cxx:(.text+0xc): undefined reference to `__sincos'
+collect2: ld returned 1 exit status
+gmake[1]: *** [cmTryCompileExec2330744710] Error 1
+gmake[1]: Leaving directory `/raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp'
+gmake: *** [cmTryCompileExec2330744710/fast] Error 2
+
+File /raid/44/serban/apps/relion-2.0-relax/relion/build/CMakeFiles/CMakeTmp/CheckSymbolExists.cxx:
+/* */
+#include <math.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __sincos
+  return ((int*)(&__sincos))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+

@@ -454,6 +454,8 @@ public:
 	// Until now the best refinements have used the noisy mask, not the soft mask....
 	bool do_zero_mask;
 
+        std::string relax_symmetry;
+
 	/////////// Keep track of hidden variable changes ////////////////////////
 
 	// Changes from one iteration to the next in the angles

@@ -149,6 +149,8 @@ public:
 	// Variance in psi angle for the orientational pdf
 	RFLOAT sigma2_psi;
 
+        std::string relax_symmetry;
+
 	// Estimated accuracy at which rotations can be assigned, one for each class
 	std::vector<RFLOAT> acc_rot;
 

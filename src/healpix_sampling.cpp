@@ -40,7 +40,10 @@ void HealpixSampling::clear()
 	translations_z.clear();
 	L_repository.clear();
 	R_repository.clear();
+	relax_L_repository.clear();
+	relax_R_repository.clear();
 	pgGroup = pgOrder = 0;
+	relax_pgGroup = relax_pgOrder = 0;
 
 }
 
@@ -53,7 +56,8 @@ void HealpixSampling::initialise(
 		bool do_local_searches,
 		bool do_helical_refine,
 		RFLOAT rise_pix,
-		RFLOAT twist_deg)
+		RFLOAT twist_deg,
+                std::string relax_symmetry)
 {
 
 	// Set the prior mode (belongs to mlmodel, but very useful inside this object)
@@ -86,12 +90,18 @@ void HealpixSampling::initialise(
 		SL.isSymmetryGroup(fn_sym, pgGroup, pgOrder);
 		SL.read_sym_file(fn_sym);
 
+		SymList relax_SL;
+		relax_SL.isSymmetryGroup(relax_symmetry, relax_pgGroup, relax_pgOrder);
+		relax_SL.read_sym_file(relax_symmetry);
+
 		// Precalculate (3x3) symmetry matrices
-		Matrix2D<RFLOAT>  L(4, 4), R(4, 4);
+		Matrix2D<RFLOAT>  L(4, 4), R(4, 4), relax_L(4, 4), relax_R(4, 4);
 		Matrix2D<RFLOAT>  Identity(3,3);
 		Identity.initIdentity();
 		R_repository.clear();
 		L_repository.clear();
+		relax_R_repository.clear();
+		relax_L_repository.clear();
 		R_repository.push_back(Identity);
 		L_repository.push_back(Identity);
 		for (int isym = 0; isym < SL.SymsNo(); isym++)
@@ -101,6 +111,16 @@ void HealpixSampling::initialise(
 			L.resize(3, 3);
 			R_repository.push_back(R);
 			L_repository.push_back(L);
+		}
+		relax_R_repository.push_back(Identity);
+		relax_L_repository.push_back(Identity);
+		for (int relax_isym = 0; relax_isym < relax_SL.SymsNo(); relax_isym++)
+		{
+			relax_SL.get_matrices(relax_isym, relax_L, relax_R);
+			relax_R.resize(3, 3);
+			relax_L.resize(3, 3);
+			relax_R_repository.push_back(relax_R);
+			relax_L_repository.push_back(relax_L);
 		}
 	}
 	else
@@ -614,157 +634,237 @@ void HealpixSampling::selectOrientationsWithNonZeroPriorProbability(
     	std::vector<int> &pointer_dir_nonzeroprior, std::vector<RFLOAT> &directions_prior,
     	std::vector<int> &pointer_psi_nonzeroprior, std::vector<RFLOAT> &psi_prior,
 		bool do_bimodal_search_psi,
+                std::string relax_symmetry,
 		RFLOAT sigma_cutoff)
 {
 	pointer_dir_nonzeroprior.clear();
 	directions_prior.clear();
+	pointer_psi_nonzeroprior.clear();
+	psi_prior.clear();
+        std::vector<double> list_of_angs;
+        std::vector<long int> list_of_dirs;
+        std::vector<double> small_dir_prior;
+        std::vector<double> small_psi_prior;
+        RFLOAT best_idir = -999;
+	RFLOAT best_diff = 9999.;
+	RFLOAT best_ipsi = -999;
+        RFLOAT overall_sumprior = 0.;
+        RFLOAT overall_psi_sumprior = 0.;
+
+        //std::cout << "Prior rot: " << prior_rot << std::endl;
+        //std::cout << "Prior tilt: " << prior_tilt << std::endl;
+        //std::cout << "Prior psi: " << prior_psi << std::endl;
+
 
 	if (is_3D)
 	{
-		// Loop over all directions
-		RFLOAT sumprior = 0.;
-		// Keep track of the closest distance to prevent 0 orientations
-		RFLOAT best_ang = 9999.;
-		long int best_idir = -999;
-		for (long int idir = 0; idir < rot_angles.size(); idir++)
+
+		for (int p = 0; p < relax_R_repository.size(); p++)
 		{
-			// Any prior involving BOTH rot and tilt.
-			if ( (sigma_rot > 0.) && (sigma_tilt > 0.) )
+			RFLOAT best_ang = 9999.;
+			Matrix1D<RFLOAT> prior_direction, my_direction, sym_direction, best_direction, real_prior_direction, best_sym_direction;
+			Matrix2D<RFLOAT> real_prior_matrix, prior_matrix;		
+
+			Euler_angles2direction(prior_rot, prior_tilt, real_prior_direction);
+
+			Euler_angles2matrix(prior_rot, prior_tilt, prior_psi, real_prior_matrix);
+
+			prior_direction = relax_L_repository[p] * (real_prior_direction.transpose() * relax_R_repository[p]).transpose();
+			prior_matrix = relax_L_repository[p] * (real_prior_matrix * relax_R_repository[p]).transpose();
+                        prior_matrix = prior_matrix.transpose();
+
+			RFLOAT best_dotProduct = 0;
+			best_direction.initZeros(3);
+
+                        list_of_angs.clear();
+                        list_of_dirs.clear();
+
+		        // Loop over all directions
+		        RFLOAT sumprior = 0.;
+                        RFLOAT psi_sumprior = 0.;
+		        // Keep track of the closest distance to prevent 0 orientations
+		        long int best_idir = -999;
+		        RFLOAT best_diff = 9999.;
+	                long int best_ipsi = -999;
+			
+			for (long int idir = 0; idir < rot_angles.size(); idir++)
 			{
-				Matrix1D<RFLOAT> prior_direction, my_direction, sym_direction, best_direction;
-
-				// Get the direction of the prior
-				Euler_angles2direction(prior_rot, prior_tilt, prior_direction);
-
-				// Get the current direction in the loop
-				Euler_angles2direction(rot_angles[idir], tilt_angles[idir], my_direction);
-
-				// Loop over all symmetry operators to find the operator that brings this direction nearest to the prior
-				RFLOAT best_dotProduct = dotProduct(prior_direction, my_direction);
-				best_direction = my_direction;
-				for (int j = 0; j < R_repository.size(); j++)
+				if (sigma_rot > 0. || sigma_tilt > 0. )
 				{
-					sym_direction =  L_repository[j] * (my_direction.transpose() * R_repository[j]).transpose();
-					RFLOAT my_dotProduct = dotProduct(prior_direction, sym_direction);
+					Euler_angles2direction(rot_angles[idir], tilt_angles[idir], my_direction);
+					RFLOAT best_sym_dotProduct = dotProduct(prior_direction, my_direction);
+					best_sym_direction = my_direction;
+					int best_j = 0;					
+
+					for (int j = 0; j < R_repository.size(); j++)
+					{
+						sym_direction =  L_repository[j] * (my_direction.transpose() * R_repository[j]).transpose();
+						RFLOAT my_sym_dotProduct = dotProduct(prior_direction, sym_direction);
+						if (my_sym_dotProduct > best_sym_dotProduct)
+						{
+							best_sym_direction = sym_direction;
+							best_sym_dotProduct = my_sym_dotProduct;
+							best_j = j;
+						}
+					}
+
+					RFLOAT my_dotProduct = dotProduct(prior_direction, best_sym_direction);
 					if (my_dotProduct > best_dotProduct)
 					{
-						best_direction = sym_direction;
+						best_direction = best_sym_direction;
 						best_dotProduct = my_dotProduct;
 					}
-				}
 
-				// Now that we have the best direction, find the corresponding prior probability
-				RFLOAT diffang = ACOSD( dotProduct(best_direction, prior_direction) );
-				if (diffang > 180.)
-					diffang = ABS(diffang - 360.);
+					if (sigma_rot > 0. && sigma_tilt > 0.)
+					{
+						RFLOAT diffang = ACOSD( dotProduct(best_sym_direction, prior_direction) );
+						if (diffang > 180.) diffang = ABS(diffang - 360.);
 
-				// Only consider differences within sigma_cutoff * sigma_rot
-				// TODO: If sigma_rot and sigma_tilt are not the same (NOT for helices)?
-				RFLOAT biggest_sigma = XMIPP_MAX(sigma_rot, sigma_tilt);
-				if (diffang < sigma_cutoff * biggest_sigma)
+						// Only consider differences within sigma_cutoff * sigma_rot
+						if (diffang < sigma_cutoff * sigma_rot)
+                                                {
+                                                        list_of_angs.push_back(diffang);
+                                                        list_of_dirs.push_back(idir);
+                                                }
+
+						// Keep track of the nearest direction
+						if (diffang < best_ang)
+						{
+							best_idir = idir;
+							best_ang = diffang;
+						}
+					}
+					else if (sigma_rot > 0.)
+					{
+						RFLOAT best_rot, best_tilt;
+
+						Euler_direction2angles(best_direction, best_rot, best_tilt);
+						RFLOAT diffrot = ABS(best_rot - prior_rot);
+						if (diffrot > 180.) diffrot = ABS(diffrot - 360.);
+
+						// Only consider differences within sigma_cutoff * sigma_rot
+						if (diffrot < sigma_cutoff * sigma_rot)
+						{
+							RFLOAT prior = gaussian1D(diffrot, sigma_rot, 0.);
+							pointer_dir_nonzeroprior.push_back(idir);
+							directions_prior.push_back(prior);
+							sumprior += prior;
+						}
+
+						// Keep track of the nearest direction
+						if (diffrot < best_ang)
+						{
+							best_idir = idir;
+							best_ang = diffrot;
+						}
+
+					}
+					else if (sigma_tilt > 0.)
+					{
+
+						RFLOAT best_rot, best_tilt;
+
+						Euler_direction2angles(best_direction, best_rot, best_tilt);
+						RFLOAT difftilt = ABS(best_tilt - prior_tilt);
+						if (difftilt > 180.) difftilt = ABS(difftilt - 360.);
+
+						// Only consider differences within sigma_cutoff * sigma_tilt
+						if (difftilt < sigma_cutoff * sigma_tilt)
+						{
+							RFLOAT prior = gaussian1D(difftilt, sigma_tilt, 0.);
+							pointer_dir_nonzeroprior.push_back(idir);
+							directions_prior.push_back(prior);
+							sumprior += prior;
+						}
+
+						// Keep track of the nearest direction
+						if (difftilt < best_ang)
+						{
+							best_idir = idir;
+							best_ang = difftilt;
+						}
+
+					}
+				} // end if any prior involving rot and/or tilt
+				else
 				{
-					// TODO!!! If tilt is zero then any rot will be OK!!!!!
-					RFLOAT prior = gaussian1D(diffang, biggest_sigma, 0.);
+					// If no prior on the directions: just add all of them
 					pointer_dir_nonzeroprior.push_back(idir);
-					directions_prior.push_back(prior);
-					sumprior += prior;
+					directions_prior.push_back(1.);
+					pointer_psi_nonzeroprior.push_back(idir);
+					psi_prior.push_back(1.);
+					sumprior += 1.;
 				}
 
-				// Keep track of the nearest direction
-				if (diffang < best_ang)
-				{
-					best_idir = idir;
-					best_ang = diffang;
-				}
-			}
-			else if (sigma_rot > 0.)
+			} // end for idir
+
+                        int counter = 0;
+                        for (long int l = 0; l < list_of_angs.size(); l++)
+                        {
+                                if (best_ang == list_of_angs[l]) counter = 1;
+                        }
+                        if (counter == 0)
+                        {
+                                list_of_angs.push_back(best_ang);
+                                list_of_dirs.push_back(best_idir);
+                        }
+
+                        small_dir_prior.clear();
+                        small_psi_prior.clear();                 
+                        RFLOAT new_prior_rot, new_prior_tilt, new_prior_psi;
+                        RFLOAT test_rot, test_tilt;
+			Euler_matrix2angles(prior_matrix, new_prior_rot, new_prior_tilt, new_prior_psi);
+
+        		//std::cout << "New prior rot: " << new_prior_rot << std::endl;
+        		//std::cout << "New prior tilt: " << new_prior_tilt << std::endl;
+        		//std::cout << "New prior psi: " << new_prior_psi << std::endl;
+
+                        if (new_prior_psi < 0)
+                        	new_prior_psi = new_prior_psi + 360.;
+                        best_ipsi = -999;
+                        long int best_ipsi_diff = 999;
+                        for (long int ipsi = 0; ipsi < psi_angles.size(); ipsi++)
 			{
-				Matrix1D<RFLOAT> my_direction, sym_direction;
-				RFLOAT sym_rot, sym_tilt;
+                                if (abs(psi_angles[ipsi] - new_prior_psi) < best_ipsi_diff)
+                                {
+                                        best_ipsi_diff = abs(psi_angles[ipsi] - new_prior_psi);
+                                        best_ipsi = ipsi;
+                                }
+                        }
+                        //std::cout << "Best rot: " << rot_angles[best_idir] << std::endl;
+                        //std::cout << "Best tilt: " << tilt_angles[best_idir] << std::endl;
+                        //std::cout << "Best psi: " << psi_angles[best_ipsi] << std::endl;
+                        for (long int k = 0; k < list_of_angs.size(); k++)
+                        {
+                                RFLOAT prior = 1.;
+			        pointer_dir_nonzeroprior.push_back(list_of_dirs[k]);
+                                small_dir_prior.push_back(prior);
+			        sumprior += prior;
 
-				// Get the current direction in the loop
-				Euler_angles2direction(rot_angles[idir], tilt_angles[idir], my_direction);
-				RFLOAT diffang = calculateDeltaRot(my_direction, prior_rot);
-				RFLOAT best_diffang = diffang;
-				for (int j = 0; j < R_repository.size(); j++)
-				{
-					sym_direction =  L_repository[j] * (my_direction.transpose() * R_repository[j]).transpose();
-					diffang = calculateDeltaRot(sym_direction, prior_rot);
+                                RFLOAT prior_psi = 1.;
+			        pointer_psi_nonzeroprior.push_back(best_ipsi);
+                                small_psi_prior.push_back(prior_psi);
+                                psi_sumprior += prior_psi;
 
-					if (diffang < best_diffang)
-						best_diffang = diffang;
-				}
+                        }
+                        for (long int idir = 0; idir < small_dir_prior.size(); idir++)
+		        {
+			        small_dir_prior[idir] /= sumprior;
+                                directions_prior.push_back(small_dir_prior[idir]);
+                                psi_prior.push_back(small_psi_prior[idir]);
+                                overall_sumprior += small_dir_prior[idir];
+                                overall_psi_sumprior += small_psi_prior[idir];
+		        }
+                        			
 
-				// Only consider differences within sigma_cutoff * sigma_rot
-				if (best_diffang < sigma_cutoff * sigma_rot)
-				{
-					RFLOAT prior = gaussian1D(best_diffang, sigma_rot, 0.);
-					pointer_dir_nonzeroprior.push_back(idir);
-					directions_prior.push_back(prior);
-					sumprior += prior;
-				}
-
-				// Keep track of the nearest direction
-				if (best_diffang < best_ang)
-				{
-					best_idir = idir;
-					best_ang = diffang;
-				}
-			}
-			else if (sigma_tilt > 0.)
-			{
-				Matrix1D<RFLOAT> my_direction, sym_direction;
-				RFLOAT sym_rot, sym_tilt;
-
-				// Get the current direction in the loop
-				Euler_angles2direction(rot_angles[idir], tilt_angles[idir], my_direction);
-
-				// Loop over all symmetry operators to find the operator that brings this direction nearest to the prior
-				RFLOAT diffang = ABS(tilt_angles[idir] - prior_tilt);
-				if (diffang > 180.)
-					diffang = ABS(diffang - 360.);
-				RFLOAT best_diffang = diffang;
-				for (int j = 0; j < R_repository.size(); j++)
-				{
-					sym_direction =  L_repository[j] * (my_direction.transpose() * R_repository[j]).transpose();
-					Euler_direction2angles(sym_direction, sym_rot, sym_tilt);
-					diffang = ABS(sym_tilt - prior_tilt);
-					if (diffang > 180.)
-						diffang = ABS(diffang - 360.);
-					if (diffang < best_diffang)
-						best_diffang = diffang;
-				}
-
-				// Only consider differences within sigma_cutoff * sigma_tilt
-				if (best_diffang < sigma_cutoff * sigma_tilt)
-				{
-					RFLOAT prior = gaussian1D(best_diffang, sigma_tilt, 0.);
-					pointer_dir_nonzeroprior.push_back(idir);
-					directions_prior.push_back(prior);
-					sumprior += prior;
-				}
-
-				// Keep track of the nearest direction
-				if (best_diffang < best_ang)
-				{
-					best_idir = idir;
-					best_ang = diffang;
-				}
-			} // end if any prior involving rot and/or tilt
-			else
-			{
-				// If no prior on the directions: just add all of them
-				pointer_dir_nonzeroprior.push_back(idir);
-				directions_prior.push_back(1.);
-				sumprior += 1.;
-			}
-
-		} // end for idir
+		} // end for p
 
 		//Normalise the prior probability distribution to have sum 1 over all psi-angles
-		for (long int idir = 0; idir < directions_prior.size(); idir++)
-			directions_prior[idir] /= sumprior;
-
+                for (long int idir = 0; idir < directions_prior.size(); idir++)
+		{
+		        directions_prior[idir] /= overall_sumprior;
+		        psi_prior[idir] /= overall_psi_sumprior;
+		}
 		// If there were no directions at all, just select the single nearest one:
 		if (directions_prior.size() == 0)
 		{
@@ -772,10 +872,12 @@ void HealpixSampling::selectOrientationsWithNonZeroPriorProbability(
 				REPORT_ERROR("HealpixSampling::selectOrientationsWithNonZeroPriorProbability BUG: best_idir < 0");
 			pointer_dir_nonzeroprior.push_back(best_idir);
 			directions_prior.push_back(1.);
+			pointer_psi_nonzeroprior.push_back(best_ipsi);
+			psi_prior.push_back(1.);
 		}
 
 #ifdef  DEBUG_SAMPLING
-		writeNonZeroPriorOrientationsToBild("orients_local.bild", prior_rot, prior_tilt, pointer_dir_nonzeroprior, "0 0 1", 0.023);
+		writeNonZeroPriorOrientationsToBild("orients_local.bild", prior_rot, prior_tilt, "0 0 1", 0.023);
 		std::cerr << " directions_prior.size()= " << directions_prior.size() << " pointer_dir_nonzeroprior.size()= " << pointer_dir_nonzeroprior.size() << std::endl;
 		std::cerr << " sumprior= " << sumprior << std::endl;
 		char c;
@@ -783,81 +885,20 @@ void HealpixSampling::selectOrientationsWithNonZeroPriorProbability(
 		std::cin >> c;
 #endif
 
+
 	}
 	else
 	{
 		pointer_dir_nonzeroprior.push_back(0);
 		directions_prior.push_back(1.);
-	}
-
-	// Psi-angles
-	pointer_psi_nonzeroprior.clear();
-	psi_prior.clear();
-
-	RFLOAT sumprior = 0.;
-	RFLOAT best_diff = 9999.;
-	long int best_ipsi = -999;
-	for (long int ipsi = 0; ipsi < psi_angles.size(); ipsi++)
-	{
-		if (sigma_psi > 0.)
-		{
-			RFLOAT diffpsi = ABS(psi_angles[ipsi] - prior_psi);
-			if (diffpsi > 180.)
-				diffpsi = ABS(diffpsi - 360.);
-			if (do_bimodal_search_psi && (diffpsi > 90.))
-				diffpsi = ABS(diffpsi - 180.);
-
-			// Only consider differences within sigma_cutoff * sigma_psi
-			if (diffpsi < sigma_cutoff * sigma_psi)
-			{
-				RFLOAT prior = gaussian1D(diffpsi, sigma_psi, 0.);
-				pointer_psi_nonzeroprior.push_back(ipsi);
-				psi_prior.push_back(prior);
-				sumprior += prior;
-
-				// TMP DEBUGGING
-				if (prior == 0.)
-				{
-					std::cerr << " psi_angles[ipsi]= " << psi_angles[ipsi] << " prior_psi= " << prior_psi << " orientational_prior_mode= " << orientational_prior_mode << std::endl;
-					std::cerr << " diffpsi= " << diffpsi << " sigma_cutoff= " << sigma_cutoff << " sigma_psi= " << sigma_psi << std::endl;
-					REPORT_ERROR("prior on psi is zero!");
-				}
-
-			}
-
-			// Keep track of the nearest sampling point
-			if (diffpsi < best_diff)
-			{
-				best_ipsi = ipsi;
-				best_diff = diffpsi;
-			}
-		}
-		else
-		{
-			pointer_psi_nonzeroprior.push_back(ipsi);
-			psi_prior.push_back(1.);
-			sumprior += 1.;
-		}
-	}
-	// Normalise the prior probability distribution to have sum 1 over all psi-angles
-	for (long int ipsi = 0; ipsi < psi_prior.size(); ipsi++)
-		psi_prior[ipsi] /= sumprior;
-
-	// If there were no directions at all, just select the single nearest one:
-	if (psi_prior.size() == 0)
-	{
-		if (best_ipsi < 0)
-			REPORT_ERROR("HealpixSampling::selectOrientationsWithNonZeroPriorProbability BUG: best_ipsi < 0");
-		pointer_psi_nonzeroprior.push_back(best_ipsi);
+		pointer_psi_nonzeroprior.push_back(0);
 		psi_prior.push_back(1.);
 	}
-
-#ifdef  DEBUG_SAMPLING
-	std::cerr << " psi_angles.size()= " << psi_angles.size() << " psi_step= " << psi_step << std::endl;
-	std::cerr << " psi_prior.size()= " << psi_prior.size() << " pointer_psi_nonzeroprior.size()= " << pointer_psi_nonzeroprior.size() << " sumprior= " << sumprior << std::endl;
-#endif
-	return;
 }
+
+
+
+
 
 void HealpixSampling::selectOrientationsWithNonZeroPriorProbabilityFor3DHelicalReconstruction(
 		RFLOAT prior_rot, RFLOAT prior_tilt, RFLOAT prior_psi,

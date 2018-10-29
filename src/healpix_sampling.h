@@ -73,13 +73,17 @@ public:
 
     /** Name of the Symmetry group */
     FileName fn_sym;
+    FileName relax_symmetry;
 
     /** List of symmetry operators */
-    std::vector <Matrix2D<RFLOAT> > R_repository, L_repository;
+    std::vector <Matrix2D<RFLOAT> > R_repository, L_repository, relax_R_repository, relax_L_repository;
 
     /** Two numbers that describe the symmetry group */
     int pgGroup;
     int pgOrder;
+
+    int relax_pgGroup;
+    int relax_pgOrder;
 
     /** Limited tilt angle range */
     RFLOAT limit_tilt;
@@ -92,6 +96,9 @@ public:
 
     /** vector with the psi-samples */
     std::vector<RFLOAT> psi_angles;
+
+    /** vector with the selected psi angles */
+    std::vector<double> selected_psi_angles;
 
     /** vector with the X,Y(,Z)-translations */
     std::vector<RFLOAT> translations_x, translations_y, translations_z;
@@ -164,7 +171,8 @@ public:
 			bool do_local_searches = false,
 			bool do_helical_refine = false,
 			RFLOAT rise_pix  = 0.,
-			RFLOAT twist_deg = 0.);
+			RFLOAT twist_deg = 0.,
+                        std::string relax_symmetry = "C1");
 
     // Reset the random perturbation
     void resetRandomlyPerturbedSampling();
@@ -233,7 +241,8 @@ public:
     		std::vector<int> &pointer_dir_nonzeroprior, std::vector<RFLOAT> &directions_prior,
     		std::vector<int> &pointer_psi_nonzeroprior, std::vector<RFLOAT> &psi_prior,
 			bool do_bimodal_search_psi = false,
-    		RFLOAT sigma_cutoff = 3.);
+    		std::string relax_symmetry = "C1",
+                RFLOAT sigma_cutoff = 3.);
 
     void selectOrientationsWithNonZeroPriorProbabilityFor3DHelicalReconstruction(
     		RFLOAT prior_rot, RFLOAT prior_tilt, RFLOAT prior_psi,
