@@ -1,1 +1,0 @@
-cmd='<SOURCE_DIR>/configure;--enable-shared;--prefix=/raid/44/serban/apps/relion-2.0-relax/relion/external/fltk'

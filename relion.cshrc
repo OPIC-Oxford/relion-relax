@@ -1,6 +1,6 @@
 setenv APPS /users/strubi/serban/well/apps
 
-setenv RELION relion-2.0-relax-patch/relion
+setenv RELION git_test/relion-relax
 
 limit datasize unlimited
 limit stacksize unlimited
